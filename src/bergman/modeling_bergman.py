@@ -984,12 +984,13 @@ class BergmanMatrixLayer(nn.Module):
 
         context = [available_vectors[s] for s in self.use_for_context]
         x = torch.concatenate(context, axis=-1)
-        if self.complex_matrix_abs:
-            x = x.abs()
-        else:
-            x = torch.view_as_real(x).view(
-                batch_sz, context_sz, self.num_matrix_heads, self.matrix_dim * len(self.use_for_context) * 2
-            )
+        if self.complex_matrix:
+            if self.complex_matrix_abs:
+                x = x.abs()
+            else:
+                x = torch.view_as_real(x).view(
+                    batch_sz, context_sz, self.num_matrix_heads, self.matrix_dim * len(self.use_for_context) * 2
+                )
         if self.networks_for_heads == "separate":
             x = [dense(x[..., i, :]) for i, dense in enumerate(self.v_to_hidden)]  # apply each nn for its head
             x = torch.concatenate(x, axis=-1)
