@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bergman"
+version = "0.0.1"
+authors = [
+  { name="Eugene Mikhantyev", email="mikhantiev@gmail.com" },
+]
+description = "Bidirectional Encoder based on Recurrent General Matrix Aggregation Network"
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+  'torch ~= 1.13.1',
+  'transformers ~= 4.27.0'
+]
+
+[project.urls]
+"Homepage" = "https://github.com/mehanik/bergman"
+"Bug Tracker" = "https://github.com/mehanik/bergman/issues"
+
+[tool.black]
+line-length = 119
+target-version = ['py38']
