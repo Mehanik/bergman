@@ -1093,7 +1093,8 @@ class BergmanMatrixLayer(nn.Module):
         else:
             raise KeyError()
 
-        v = v.type(torch.complex64)
+        if self.complex_matrix:
+            v = v.type(torch.complex64)
 
         history = [v]
         order = range(context_sz) if not reverse_direction else reversed(range(context_sz))
@@ -1101,9 +1102,9 @@ class BergmanMatrixLayer(nn.Module):
             new_v = torch.bmm(m[i], v)
             if self.norm_vectors:
                 if self.detach_norm_vectors:
-                    norm = torch.norm(new_v.detach(), dim=-1, keepdim=True)
+                    norm = torch.norm(new_v.detach(), dim=-2, keepdim=True)
                 else:
-                    norm = torch.norm(new_v, dim=-1, keepdim=True)
+                    norm = torch.norm(new_v, dim=-2, keepdim=True)
                 new_v = new_v / (norm + self.vector_norm_eps)
 
             if attention_mask is not None:
