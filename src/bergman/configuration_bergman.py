@@ -129,7 +129,6 @@ class BergmanConfig(PretrainedConfig):
         matrix_encoder_two_layers=False,
         matrix_norm_preheat_steps=0,
         norm_vectors=False,
-        detach_norm_vectors=False,
         vector_norm_eps=1e-6,
         matrix_norm_eps=1e-6,
         complex_matrix=False,
@@ -167,7 +166,6 @@ class BergmanConfig(PretrainedConfig):
         self.matrix_unitary_loss_k = matrix_unitary_loss_k
         self.matrix_norm_preheat_steps = matrix_norm_preheat_steps
         self.norm_vectors = norm_vectors
-        self.detach_norm_vectors = detach_norm_vectors
         self.vector_norm_eps = vector_norm_eps
         self.matrix_norm_eps = matrix_norm_eps
         self.complex_matrix = complex_matrix

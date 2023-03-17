@@ -863,7 +863,6 @@ class BergmanMatrixLayer(nn.Module):
         self.networks_for_heads = config.networks_for_heads
         self.matrix_encoder_two_layers = config.matrix_encoder_two_layers
         self.norm_vectors = config.norm_vectors
-        self.detach_norm_vectors = config.detach_norm_vectors
         self.vector_norm_eps = config.vector_norm_eps
         self.matrix_norm_alg = config.matrix_norm_alg
         self.matrix_norm_eps = config.matrix_norm_eps
@@ -1102,10 +1101,7 @@ class BergmanMatrixLayer(nn.Module):
         for i in order:
             new_v = torch.bmm(m[i], v)
             if self.norm_vectors:
-                if self.detach_norm_vectors:
-                    norm = torch.norm(new_v.detach(), dim=-2, keepdim=True)
-                else:
-                    norm = torch.norm(new_v, dim=-2, keepdim=True)
+                norm = torch.norm(new_v, dim=-2, keepdim=True)
                 new_v = new_v / (norm + self.vector_norm_eps)
 
             if attention_mask is not None:
