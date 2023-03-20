@@ -25,8 +25,6 @@ from transformers.utils import logging
 
 logger = logging.get_logger(__name__)
 
-BERGMAN_PRETRAINED_CONFIG_ARCHIVE_MAP = {}
-
 
 class BergmanConfig(PretrainedConfig):
     r"""
