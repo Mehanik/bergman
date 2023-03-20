@@ -36,8 +36,6 @@ from transformers.modeling_outputs import (
 from transformers.modeling_utils import PreTrainedModel
 from transformers.pytorch_utils import (
     apply_chunking_to_forward,
-    find_pruneable_heads_and_indices,
-    prune_linear_layer,
 )
 from transformers.utils import (
     add_code_sample_docstrings,
@@ -96,8 +94,7 @@ BERGMAN_INPUTS_DOCSTRING = r"""
             is useful if you want more control over how to convert `input_ids` indices into associated vectors than the
             model's internal embedding lookup matrix.
         output_matrices (`bool`, *optional*):
-            Whether or not to return the attentions tensors of all attention layers. See `attentions` under returned
-            tensors for more detail.
+            Whether or not to return the predicted matrices.
         output_hidden_states (`bool`, *optional*):
             Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
             more detail.
@@ -129,14 +126,12 @@ BERGMAN_INPUTS_DOCSTRING = r"""
             Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
             [`PreTrainedTokenizer.__call__`] for details.
 
-            [What are input IDs?](../glossary#input-ids)
         attention_mask (`torch.FloatTensor` of shape `({0})`, *optional*):
             Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
 
             - 1 for tokens that are **not masked**,
             - 0 for tokens that are **masked**.
 
-            [What are attention masks?](../glossary#attention-mask)
         token_type_ids (`torch.LongTensor` of shape `({0})`, *optional*):
             Segment token indices to indicate first and second portions of the inputs. Indices are selected in `[0,1]`:
 
@@ -145,12 +140,10 @@ BERGMAN_INPUTS_DOCSTRING = r"""
             This parameter can only be used when the model is initialized with `type_vocab_size` parameter with value
             >= 2. All the value in this tensor should be always < type_vocab_size.
 
-            [What are token type IDs?](../glossary#token-type-ids)
         position_ids (`torch.LongTensor` of shape `({0})`, *optional*):
             Indices of positions of each input sequence tokens in the position embeddings. Selected in the range `[0,
             config.max_position_embeddings - 1]`.
 
-            [What are position IDs?](../glossary#position-ids)
         head_mask (`torch.FloatTensor` of shape `(num_heads,)` or `(num_layers, num_heads)`, *optional*):
             Mask to nullify selected heads of the self-attention modules. Mask values selected in `[0, 1]`:
 
@@ -181,41 +174,13 @@ class BergmanOutputWithPast(ModelOutput):
         last_hidden_state (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):
             Sequence of hidden-states at the output of the last layer of the model.
 
-            If `past_vectors_length` is used only the last hidden-state of the sequences of shape `(batch_size, 1,
-            hidden_size)` is output.
-        past_vectors_length (`tuple(tuple(torch.FloatTensor))`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
-            Tuple of `tuple(torch.FloatTensor)` of length `config.n_layers`, with each tuple having 2 tensors of shape
-            `(batch_size, num_heads, sequence_length, embed_size_per_head)`) and optionally if
-            `config.is_encoder_decoder=True` 2 additional tensors of shape `(batch_size, num_heads,
-            encoder_sequence_length, embed_size_per_head)`.
-
-            Contains pre-computed hidden-states (key and values in the self-attention blocks and optionally if
-            `config.is_encoder_decoder=True` in the cross-attention blocks) that can be used (see `past_vectors_length`
-            input) to speed up sequential decoding.
-        hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
-            Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +
-            one for the output of each layer) of shape `(batch_size, sequence_length, hidden_size)`.
-
-            Hidden-states of the model at the output of each layer plus the optional initial embedding outputs.
-        attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):
-            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,
-            sequence_length)`.
-
-            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention
-            heads.
-        cross_attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` and `config.add_cross_attention=True` is passed or when `config.output_attentions=True`):
-            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,
-            sequence_length)`.
-
-            Attentions weights of the decoder's cross-attention layer, after the attention softmax, used to compute the
-            weighted average in the cross-attention heads.
+        matrices (`tuple(torch.FloatTensor)`, *optional*, returned when `output_matrices=True`
+            Tuple of `torch.FloatTensor` (one for each layer) of shape `(sequence_length, batch_size, num_heads,
+            matrix_dim, matrix_dim)`.
     """
 
     last_hidden_state: torch.FloatTensor = None
-    past_vectors: Optional[Tuple[torch.FloatTensor]] = None
-    hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     matrices: Optional[Tuple[torch.FloatTensor]] = None
-    # cross_attentions: Optional[Tuple[torch.FloatTensor]] = None
 
 
 @dataclass
@@ -231,40 +196,14 @@ class BergmanOutputWithPooling(ModelOutput):
             through the layers used for the auxiliary pretraining task. E.g. for BERT-family of models, this returns
             the classification token after processing through a linear layer and a tanh activation function. The linear
             layer weights are trained from the next sentence prediction (classification) objective during pretraining.
-        hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
-            Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +
-            one for the output of each layer) of shape `(batch_size, sequence_length, hidden_size)`.
-
-            Hidden-states of the model at the output of each layer plus the optional initial embedding outputs.
-        attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):
-            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,
-            sequence_length)`.
-
-            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention
-            heads.
-        cross_attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` and `config.add_cross_attention=True` is passed or when `config.output_attentions=True`):
-            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,
-            sequence_length)`.
-
-            Attentions weights of the decoder's cross-attention layer, after the attention softmax, used to compute the
-            weighted average in the cross-attention heads.
-        past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
-            Tuple of `tuple(torch.FloatTensor)` of length `config.n_layers`, with each tuple having 2 tensors of shape
-            `(batch_size, num_heads, sequence_length, embed_size_per_head)`) and optionally if
-            `config.is_encoder_decoder=True` 2 additional tensors of shape `(batch_size, num_heads,
-            encoder_sequence_length, embed_size_per_head)`.
-
-            Contains pre-computed hidden-states (key and values in the self-attention blocks and optionally if
-            `config.is_encoder_decoder=True` in the cross-attention blocks) that can be used (see `past_key_values`
-            input) to speed up sequential decoding.
+        matrices (`tuple(torch.FloatTensor)`, *optional*, returned when `output_matrices=True`
+            Tuple of `torch.FloatTensor` (one for each layer) of shape `(sequence_length, batch_size, num_heads,
+            matrix_dim, matrix_dim)`.
     """
 
     last_hidden_state: torch.FloatTensor = None
     pooler_output: torch.FloatTensor = None
-    hidden_states: Optional[Tuple[torch.FloatTensor]] = None
-    past_vectors: Optional[Tuple[torch.FloatTensor]] = None
     matrices: Optional[Tuple[torch.FloatTensor]] = None
-    # cross_attentions: Optional[Tuple[torch.FloatTensor]] = None
 
 
 class BergmanPreTrainedModel(PreTrainedModel):
@@ -274,7 +213,7 @@ class BergmanPreTrainedModel(PreTrainedModel):
     """
 
     config_class = BergmanConfig
-    base_model_prefix = "bergman"  # TODO
+    base_model_prefix = "bergman"
     supports_gradient_checkpointing = True
     _no_split_modules = []
 
@@ -504,16 +443,8 @@ class BergmanForMaskedLM(BergmanPreTrainedModel):
 class BergmanModel(BergmanPreTrainedModel):
     """
 
-    The model can behave as an encoder (with only self-attention) as well as a decoder, in which case a layer of
-    cross-attention is added between the self-attention layers, following the architecture described in *Attention is
-    all you need*_ by Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz
-    Kaiser and Illia Polosukhin.
-
-    To behave as an decoder the model needs to be initialized with the `is_decoder` argument of the configuration set
-    to `True`. To be used in a Seq2Seq model, the model needs to initialized with both `is_decoder` argument and
-    `add_cross_attention` set to `True`; an `encoder_hidden_states` is then expected as an input to the forward pass.
-
-    .. _*Attention is all you need*: https://arxiv.org/abs/1706.03762
+    Structure of a model is inherited from BERT, but it uses recurrent matrix multiplication layers instead
+    of self-attention
 
     """
 
@@ -537,14 +468,6 @@ class BergmanModel(BergmanPreTrainedModel):
 
     def set_input_embeddings(self, value):
         self.embeddings.word_embeddings = value
-
-    def _prune_heads(self, heads_to_prune):
-        """
-        Prunes heads of the model. heads_to_prune: dict of {layer_num: list of heads to prune in this layer} See base
-        class PreTrainedModel
-        """
-        for layer, heads in heads_to_prune.items():
-            self.encoder.layer[layer].attention.prune_heads(heads)
 
     @add_start_docstrings_to_model_forward(BERGMAN_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
@@ -676,10 +599,7 @@ class BergmanModel(BergmanPreTrainedModel):
         return BergmanOutputWithPooling(
             last_hidden_state=sequence_output,
             pooler_output=pooled_output,
-            past_vectors=encoder_outputs.past_vectors,
-            hidden_states=encoder_outputs.hidden_states,
             matrices=encoder_outputs.matrices,
-            # cross_attentions=encoder_outputs.cross_attentions,
         )
 
     def get_extended_attention_mask(
@@ -1176,7 +1096,6 @@ class BergmanMatrixBlock(nn.Module):
         super().__init__()
         self.mm = BergmanMatrixLayer(config)
         self.output = BergmanMatrixOutput(config)
-        self.pruned_heads = set()
 
     def forward(
         self,
@@ -1341,19 +1260,13 @@ class BergmanEncoder(nn.Module):
                 v
                 for v in [
                     hidden_states,
-                    next_decoder_cache,
-                    all_hidden_states,
                     all_matrices,
-                    # all_cross_attentions,
                 ]
                 if v is not None
             )
         return BergmanOutputWithPast(
             last_hidden_state=hidden_states,
-            past_vectors=next_decoder_cache,
-            hidden_states=all_hidden_states,
             matrices=all_matrices,
-            # cross_attentions=all_cross_attentions,
         )
 
 
