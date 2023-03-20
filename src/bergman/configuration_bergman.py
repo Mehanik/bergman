@@ -30,7 +30,7 @@ BERGMAN_PRETRAINED_CONFIG_ARCHIVE_MAP = {}
 
 class BergmanConfig(PretrainedConfig):
     r"""
-    This is the configuration class to store the configuration of a [`BergmanModel`] or a [`TFBergmanModel`]. It is
+    This is the configuration class to store the configuration of a [`BergmanModel`]. It is
     used to instantiate a BERGMAN model according to the specified arguments, defining the model architecture.
 
     Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
@@ -54,8 +54,6 @@ class BergmanConfig(PretrainedConfig):
             `"relu"`, `"silu"` and `"gelu_new"` are supported.
         hidden_dropout_prob (`float`, *optional*, defaults to 0.1):
             The dropout probability for all fully connected layers in the embeddings, encoder, and pooler.
-        attention_probs_dropout_prob (`float`, *optional*, defaults to 0.1):
-            The dropout ratio for the attention probabilities.
         max_position_embeddings (`int`, *optional*, defaults to 512):
             The maximum sequence length that this model might ever be used with. Typically set this to something large
             just in case (e.g., 512 or 1024 or 2048).
@@ -78,6 +76,63 @@ class BergmanConfig(PretrainedConfig):
             relevant if `config.is_decoder=True`.
         classifier_dropout (`float`, *optional*):
             The dropout ratio for the classification head.
+        output_matrices (`bool`, *optional*, defaults to False)
+            Should matrix layer returns predicted matrices or not.
+        matrix_norm_alg (`str` or `int` or `tuple(int, int)`, *optional*, defaults to None)
+            How to calculate values to normalize matrices.
+            If it is `int` (-1 or -2), than matrix will be divided by l2 norm across given dimension
+            (-1 for rows and -2 for columns).
+            If it is `tuple(int, int)`, then matrix will be divided by its Frobenius norm across given dims
+            multiplied by `sqrt(matrix_dim)`.
+            In case of `"det"`if will be divided by determinant.
+            If `"ortho"` is given, QR-decomposition based algorithm will be used to make matrix orthogonal.
+        matrix_dim (`int`, *optional*, defaults to 16)
+            Matrix size will be `matrix_dim * matrix_dim`.
+        vector_init_direction (`str`, *optional*, defaults to "one")
+            Vector initialization algorithm.
+            If `"one'`, initial vector will be `(1, 0, ..., 0)`.
+            If `"all"`, initial vector will be `(1, 1, ..., 1) / sqrt(max_dim)`.
+        use_for_context (`list(str)`, *optional*, defaults to ["lr"])
+            What matrices to use as representations of each element of a sequence.
+                `"global"` -- multiply all matrices of a sequence.
+                `"lr"` -- all matrices before current position, with current position matrix.
+                `"lr_excl"`-- all matrices before current position, without current position matrix.
+                `"rl"`-- all matrices after current position, with current position matrix.
+                `"rl_excl"`-- all matrices after current position, without current position matrix.
+                `"local"` -- only current position matrix.
+                `"local_l"` -- only matrix of the element that goes after current element.
+                `"local_r"` -- only matrix of the element that goes before current element.
+        networks_for_heads (`str` or `None`, *optional*, defaults to None)
+            `None` -- just concatenate vetors from all heads.
+            `"separate"` -- each head has own dense layer.
+            `"common"` -- dense layer applied over concatenation of vectors from all heads.
+        matrix_norm_loss_type (`None` or `str`, *optional*, defaults to None).
+            `"MSE"` loss can be used to make matrix columns ot matrix rows norm equals 1
+        matrix_norm_loss_axis (`tuple(int)`, *optional*, defaults to (-1,))
+            axis to apply loss.
+        matrix_norm_loss_k (`float`, *optional*, defaults to 1.0)
+            weight of `matrix_norm_loss_type` in total loss.k
+        matrix_unitary_loss (`str`, *optional*, defaults to None)
+            `"MSE"` loss can be used to make `A @ A.T` equals to `I`.
+        matrix_unitary_loss_k (`float`, *optional*, defaults to 1.0)
+            weight of `matrix_unitary_loss_k` in total loss.
+        matrix_encoder_two_layers (`bool`, *optional*, defaults to False)
+            Apply second `dense` layer, followed by `gelu` and `layer_norm` in matrix encoder network.
+        matrix_norm_preheat_steps (`int`, *optional*, defaults to 0)
+            Number of steps at the begining of training process, during which only matrix_unitary_loss and
+            matrix_norm_loss is used.
+        norm_vectors (`bool`, *optional*, defaults to False)
+            Divide vectors by its L2 norm.
+        vector_norm_eps (`float`, *optional*, defaults to 1e-6)
+            The epsilon used by vector normalization.
+        matrix_norm_eps (`float`, *optional*, defaults to 1e-6)
+            The epsilon used by matrix normalization.
+        complex_matrix (`bool`, *optional*, defaults to False)
+            If `True` then complex values matrix will be used. Otherwise float.
+        complex_matrix_abs (`bool`, *optional*, defaults to False)
+            If `complex_matrix` is `True`, this parameter controls how the complex vector will be represented in
+            subsequent network leyers. If `True`, the `abs` of the vector will be user, othervise, real and
+            imaginary parts will be concatinated.
 
     Examples:
 
@@ -104,7 +159,6 @@ class BergmanConfig(PretrainedConfig):
         intermediate_size=3072,
         hidden_act="gelu",
         hidden_dropout_prob=0.1,
-        attention_probs_dropout_prob=0.1,
         max_position_embeddings=512,
         type_vocab_size=2,
         initializer_range=0.02,
@@ -144,7 +198,6 @@ class BergmanConfig(PretrainedConfig):
         self.hidden_act = hidden_act
         self.intermediate_size = intermediate_size
         self.hidden_dropout_prob = hidden_dropout_prob
-        self.attention_probs_dropout_prob = attention_probs_dropout_prob
         self.max_position_embeddings = max_position_embeddings
         self.type_vocab_size = type_vocab_size
         self.initializer_range = initializer_range

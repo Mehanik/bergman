@@ -914,16 +914,16 @@ class BergmanMatrixLayer(nn.Module):
         assert encoder_hidden_states is None, "Not implemented"
         assert encoder_attention_mask is None, "Not implemented"
         assert head_mask is None, "Not implemented"
-        assert past_vector is None, "Nott implemented"
+        assert past_vector is None, "Not implemented"
 
         batch_sz, context_sz, *_ = hidden_states.size()
-        m_norm, m = self.predict_matrix(hidden_states)
+        m_norm, m = self.matrix_encoder(hidden_states)
         m_norm = m_norm.reshape(context_sz, batch_sz * self.num_matrix_heads, self.matrix_dim, self.matrix_dim)
 
         available_vectors = {}
 
         if {"global", "lr", "lr_excl"} & set(self.use_for_context):
-            v_lr = self.calculatte_vectors(
+            v_lr = self.calculate_vectors(
                 hidden_states,
                 m_norm,
                 attention_mask,
@@ -942,7 +942,7 @@ class BergmanMatrixLayer(nn.Module):
             available_vectors["global"] = v_global
 
         if {"rl", "rl_excl"} & set(self.use_for_context):
-            v_rl = self.calculatte_vectors(
+            v_rl = self.calculate_vectors(
                 hidden_states,
                 m_norm,
                 attention_mask,
@@ -960,7 +960,7 @@ class BergmanMatrixLayer(nn.Module):
             available_vectors["rl_excl"] = v_rl_excl
 
         if {"local", "local_l", "local_r"} & set(self.use_for_context):
-            v_local = self.calculatte_vectors(
+            v_local = self.calculate_vectors(
                 hidden_states,
                 m_norm,
                 attention_mask,
@@ -1028,7 +1028,7 @@ class BergmanMatrixLayer(nn.Module):
 
         return q
 
-    def predict_matrix(self, hidden_states: torch.Tensor):
+    def matrix_encoder(self, hidden_states: torch.Tensor):
         batch_sz, context_sz, *_ = hidden_states.size()
 
         # Matrix preparation
@@ -1070,7 +1070,7 @@ class BergmanMatrixLayer(nn.Module):
 
         return m_norm, m
 
-    def calculatte_vectors(
+    def calculate_vectors(
         self,
         hidden_states: torch.Tensor,
         m: torch.Tensor,
