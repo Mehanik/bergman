@@ -172,12 +172,20 @@ class BergmanOutputWithPast(ModelOutput):
         last_hidden_state (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):
             Sequence of hidden-states at the output of the last layer of the model.
 
+        hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or
+        when `config.output_hidden_states=True`):
+            Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +
+            one for the output of each layer) of shape `(batch_size, sequence_length, hidden_size)`.
+
+            Hidden-states of the model at the output of each layer plus the optional initial embedding outputs.
+
         matrices (`tuple(torch.FloatTensor)`, *optional*, returned when `output_matrices=True`
             Tuple of `torch.FloatTensor` (one for each layer) of shape `(sequence_length, batch_size, num_heads,
             matrix_dim, matrix_dim)`.
     """
 
     last_hidden_state: torch.FloatTensor = None
+    hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     matrices: Optional[Tuple[torch.FloatTensor]] = None
 
 
@@ -189,6 +197,11 @@ class BergmanOutputWithPooling(ModelOutput):
     Args:
         last_hidden_state (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):
             Sequence of hidden-states at the output of the last layer of the model.
+
+        hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or
+        when `config.output_hidden_states=True`):
+            Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +
+            one for the output of each layer) of shape `(batch_size, sequence_length, hidden_size)`.
         pooler_output (`torch.FloatTensor` of shape `(batch_size, hidden_size)`):
             Last layer hidden-state of the first token of the sequence (classification token) after further processing
             through the layers used for the auxiliary pretraining task. E.g. for BERT-family of models, this returns
@@ -200,6 +213,7 @@ class BergmanOutputWithPooling(ModelOutput):
     """
 
     last_hidden_state: torch.FloatTensor = None
+    hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     pooler_output: torch.FloatTensor = None
     matrices: Optional[Tuple[torch.FloatTensor]] = None
 
@@ -585,11 +599,7 @@ class BergmanForMaskedLM(BergmanPreTrainedModel):
             return ((loss,) + output) if loss is not None else output
 
         return BergmanMaskedLMOutput(
-            loss=loss,
-            logits=prediction_scores,
-            hidden_states=outputs.hidden_states,
-            metrics=metrics
-            # attentions=outputs.attentions,
+            loss=loss, logits=prediction_scores, hidden_states=outputs.hidden_states, metrics=metrics
         )
 
     def mask_matrix(self, m, attention_mask):
@@ -1166,6 +1176,7 @@ class BergmanModel(BergmanPreTrainedModel):
 
         return BergmanOutputWithPooling(
             last_hidden_state=sequence_output,
+            hidden_states=encoder_outputs.hidden_states,
             pooler_output=pooled_output,
             matrices=encoder_outputs.matrices,
         )
@@ -1834,6 +1845,7 @@ class BergmanEncoder(nn.Module):
             )
         return BergmanOutputWithPast(
             last_hidden_state=hidden_states,
+            hidden_states=all_hidden_states,
             matrices=all_matrices,
         )
 
