@@ -102,7 +102,8 @@ class BergmanConfig(PretrainedConfig):
                 `"local_r"` -- only matrix of the element that goes before current element.
         networks_for_heads (`str` or `None`, *optional*, defaults to None)
             `None` -- just concatenate vetors from all heads.
-            `"separate"` -- each head has own dense layer.
+            `"separate"` -- each head has own dense layer, predictions are concatenated
+            `"separate_sum"` -- each head has own dense layer, predictions are summed
             `"common"` -- dense layer applied over concatenation of vectors from all heads.
         matrix_norm_loss_type (`None` or `str`, *optional*, defaults to None).
             `"MSE"` loss can be used to make matrix columns ot matrix rows norm equals 1

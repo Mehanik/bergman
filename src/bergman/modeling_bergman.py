@@ -1382,6 +1382,13 @@ class BergmanMatrixLayer(nn.Module):
                     for _ in range(self.num_matrix_heads)
                 ]
             )
+        elif self.networks_for_heads == "separate_sum":
+            self.v_to_hidden = nn.ModuleList(
+                [
+                    nn.Linear(self.matrix_dim * len(self.use_for_context), self.hidden_size)
+                    for _ in range(self.num_matrix_heads)
+                ]
+            )
         elif self.networks_for_heads == "common":
             self.v_to_hidden = nn.Linear(
                 self.matrix_dim * len(self.use_for_context) * self.num_matrix_heads, self.hidden_size
@@ -1493,6 +1500,11 @@ class BergmanMatrixLayer(nn.Module):
             x = [dense(x[..., i, :]) for i, dense in enumerate(self.v_to_hidden)]  # apply each nn for its head
             x = torch.concatenate(x, axis=-1)
             x = self.act_fn(x)
+        elif self.networks_for_heads == "separate_sum":
+            x = [dense(x[..., i, :]) for i, dense in enumerate(self.v_to_hidden)]  # apply each nn for its head
+            x = torch.stack(x)
+            x = self.act_fn(x)
+            x = torch.sum(x, dim=0)
         elif self.networks_for_heads == "common":
             x = self.v_to_hidden(x.flatten(-2))
             x = self.act_fn(x)
