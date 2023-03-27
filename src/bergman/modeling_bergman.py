@@ -528,6 +528,7 @@ class BergmanForMaskedLM(BergmanPreTrainedModel):
         loss = None
         metrics = {}
         if labels is not None:
+
             matrix_norm_loss = 0.0
             if self.matrix_norm_loss_type is not None:
                 norms = []
@@ -1375,23 +1376,25 @@ class BergmanMatrixLayer(nn.Module):
         self.fc_to_mat = nn.Linear(self.hidden_size, self.num_matrix_heads * self.matrix_dim * self.matrix_dim)
         if self.complex_matrix:
             self.fc_to_mat_j = nn.Linear(self.hidden_size, self.num_matrix_heads * self.matrix_dim * self.matrix_dim)
+        complex_sz_multiplyer = 2 if self.complex_matrix and not self.complex_matrix_abs else 1
         if self.networks_for_heads == "separate":
             self.v_to_hidden = nn.ModuleList(
                 [
-                    nn.Linear(self.matrix_dim * len(self.use_for_context), self.head_vector_sz)
+                    nn.Linear(self.matrix_dim * len(self.use_for_context) * complex_sz_multiplyer, self.head_vector_sz)
                     for _ in range(self.num_matrix_heads)
                 ]
             )
         elif self.networks_for_heads == "separate_sum":
             self.v_to_hidden = nn.ModuleList(
                 [
-                    nn.Linear(self.matrix_dim * len(self.use_for_context), self.hidden_size)
+                    nn.Linear(self.matrix_dim * len(self.use_for_context) * complex_sz_multiplyer, self.hidden_size)
                     for _ in range(self.num_matrix_heads)
                 ]
             )
         elif self.networks_for_heads == "common":
             self.v_to_hidden = nn.Linear(
-                self.matrix_dim * len(self.use_for_context) * self.num_matrix_heads, self.hidden_size
+                self.matrix_dim * len(self.use_for_context) * self.num_matrix_heads * complex_sz_multiplyer,
+                self.hidden_size,
             )
         elif self.networks_for_heads == None:
             pass
