@@ -528,7 +528,6 @@ class BergmanForMaskedLM(BergmanPreTrainedModel):
         loss = None
         metrics = {}
         if labels is not None:
-
             matrix_norm_loss = 0.0
             if self.matrix_norm_loss_type is not None:
                 norms = []
@@ -650,7 +649,7 @@ class BergmanForSequenceClassification(BergmanPreTrainedModel):
         head_mask: Optional[torch.FloatTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
+        output_matrices: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
@@ -669,7 +668,7 @@ class BergmanForSequenceClassification(BergmanPreTrainedModel):
             position_ids=position_ids,
             head_mask=head_mask,
             inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
+            output_matrices=output_matrices,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
@@ -707,7 +706,7 @@ class BergmanForSequenceClassification(BergmanPreTrainedModel):
             loss=loss,
             logits=logits,
             hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
+            attentions=None,
         )
 
 
