@@ -893,7 +893,7 @@ class BergmanClassificationHead(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.dense = nn.Linear(config.hidden_size * 2, config.hidden_size)
         classifier_dropout = (
             config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
         )
@@ -901,7 +901,7 @@ class BergmanClassificationHead(nn.Module):
         self.out_proj = nn.Linear(config.hidden_size, config.num_labels)
 
     def forward(self, features, **kwargs):
-        x = features[:, 0, :]  # take <s> token (equiv. to [CLS])
+        x = torch.concatenate([features[:, 0, :], features[:, -1, :]], axis=-1)  # take <s> token (equiv. to [CLS])
         x = self.dropout(x)
         x = self.dense(x)
         x = torch.tanh(x)
@@ -1346,10 +1346,103 @@ class BergmanEmbeddings(nn.Module):
         return position_ids.unsqueeze(0).expand(input_shape)
 
 
+class BergmanMatrixEncoder(nn.Module):
+    def __init__(self, config: BergmanConfig):
+        super().__init__()
+        if config.networks_for_heads is None and config.hidden_size % (config.num_matrix_heads) != 0:
+            raise ValueError(
+                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
+                f"heads ({config.num_matrix_heads})"
+            )
+
+        self.hidden_size = config.hidden_size
+        self.num_matrix_heads = config.num_matrix_heads
+        self.matrix_dim = config.matrix_dim
+        self.matrix_encoder_two_layers = config.matrix_encoder_two_layers
+        self.matrix_norm_alg = config.matrix_norm_alg
+        self.matrix_norm_eps = config.matrix_norm_eps
+        self.complex_matrix = config.complex_matrix
+
+        self.head_vector_sz = int(self.hidden_size / self.num_matrix_heads)
+        if self.matrix_encoder_two_layers:
+            self.fc1 = nn.Linear(self.hidden_size, self.hidden_size)
+            self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.fc_to_mat = nn.Linear(self.hidden_size, self.num_matrix_heads * self.matrix_dim * self.matrix_dim)
+        if self.complex_matrix:
+            self.fc_to_mat_j = nn.Linear(self.hidden_size, self.num_matrix_heads * self.matrix_dim * self.matrix_dim)
+
+        self.matrix_norm_alg = config.matrix_norm_alg
+
+        self.is_decoder = config.is_decoder
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+    ) -> Tuple[torch.Tensor]:
+        batch_sz, context_sz, *_ = hidden_states.size()
+
+        # Matrix preparation
+        x = hidden_states
+        if self.matrix_encoder_two_layers:
+            x = self.fc1(x)
+            x = gelu(x)
+            x = self.layer_norm(x)
+        m = self.fc_to_mat(x)
+        if self.complex_matrix:
+            m_j = self.fc_to_mat_j(x)
+            m = torch.view_as_complex(torch.stack([m, m_j], dim=-1))
+
+        m = m.view(batch_sz, context_sz, self.num_matrix_heads, self.matrix_dim, self.matrix_dim)
+        m = m.transpose(0, 1)  # we will iterate over context axis
+
+        if self.matrix_norm_alg is None:
+            m_norm = m
+        elif isinstance(self.matrix_norm_alg, int):
+            n = torch.norm(m, dim=self.matrix_norm_alg, keepdim=True) + self.matrix_norm_eps
+            m_norm = m / n
+        elif isinstance(self.matrix_norm_alg, list) or isinstance(self.matrix_norm_alg, tuple):
+            assert len(self.matrix_norm_alg) == 2  # This section is for Frobenius Norm
+            m_norm = (
+                m
+                / (torch.norm(m, dim=self.matrix_norm_alg, keepdim=True) + self.matrix_norm_eps)
+                * math.sqrt(self.matrix_dim)
+            )
+        elif self.matrix_norm_alg == "det":
+            d = d = m.detach().det()
+            d = d[..., None, None]
+            m_norm = m / (d.abs() ** (1 / self.matrix_dim) + self.matrix_norm_eps)
+        elif self.matrix_norm_alg == "ortho":
+            m_norm = self.make_orthogonal(
+                m.reshape(context_sz, batch_sz * self.num_matrix_heads, self.matrix_dim, self.matrix_dim)
+            ).reshape(m.size())
+        else:
+            raise KeyError()
+
+        return m_norm, m
+
+    def make_orthogonal(self, z):
+        """Based on `ortho_group_gen` scipy function"""
+        q, r = torch.linalg.qr(z)
+        # The last two dimensions are the rows and columns of R matrices.
+        # Extract the diagonals. Note that this eliminates a dimension.
+
+        # make diagonal entries of R to be positive, then the decomposition is unique
+        s = torch.diag_embed(r.diagonal(dim1=-2, dim2=-1).sign())
+        r = s @ r
+        q = q @ s
+
+        d = r.diagonal(offset=0, dim1=-2, dim2=-1)
+        # Add back a dimension for proper broadcasting: we're dividing
+        # each row of each R matrix by the diagonal of the R matrix.
+        q *= (d / d.abs())[..., None, :]  # to broadcast properly
+
+        return q
+
+
 class BergmanMatrixLayer(nn.Module):
     def __init__(self, config: BergmanConfig):
         super().__init__()
-        if config.hidden_size % (config.num_matrix_heads) != 0:
+        if config.networks_for_heads is None and config.hidden_size % (config.num_matrix_heads) != 0:
             raise ValueError(
                 f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
                 f"heads ({config.num_matrix_heads})"
@@ -1360,21 +1453,17 @@ class BergmanMatrixLayer(nn.Module):
         self.matrix_dim = config.matrix_dim
         self.use_for_context = config.use_for_context
         self.networks_for_heads = config.networks_for_heads
-        self.matrix_encoder_two_layers = config.matrix_encoder_two_layers
         self.norm_vectors = config.norm_vectors
         self.vector_norm_eps = config.vector_norm_eps
-        self.matrix_norm_alg = config.matrix_norm_alg
-        self.matrix_norm_eps = config.matrix_norm_eps
         self.complex_matrix = config.complex_matrix
         self.complex_matrix_abs = config.complex_matrix_abs
+        self.rl_lr_matrix_different = config.rl_lr_matrix_different
+
+        self.matrix_encoder_lr = BergmanMatrixEncoder(config)
+        if self.rl_lr_matrix_different:
+            self.matrix_encoder_rl = BergmanMatrixEncoder(config)
 
         self.head_vector_sz = int(self.hidden_size / self.num_matrix_heads)
-        if self.matrix_encoder_two_layers:
-            self.fc1 = nn.Linear(self.hidden_size, self.hidden_size)
-            self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.fc_to_mat = nn.Linear(self.hidden_size, self.num_matrix_heads * self.matrix_dim * self.matrix_dim)
-        if self.complex_matrix:
-            self.fc_to_mat_j = nn.Linear(self.hidden_size, self.num_matrix_heads * self.matrix_dim * self.matrix_dim)
         complex_sz_multiplyer = 2 if self.complex_matrix and not self.complex_matrix_abs else 1
         if self.networks_for_heads == "separate":
             self.v_to_hidden = nn.ModuleList(
@@ -1425,15 +1514,25 @@ class BergmanMatrixLayer(nn.Module):
         assert past_vector is None, "Not implemented"
 
         batch_sz, context_sz, *_ = hidden_states.size()
-        m_norm, m = self.matrix_encoder(hidden_states)
-        m_norm = m_norm.reshape(context_sz, batch_sz * self.num_matrix_heads, self.matrix_dim, self.matrix_dim)
+
+        m_norm_lr, m = self.matrix_encoder_lr(hidden_states)
+        m_norm_lr = m_norm_lr.reshape(context_sz, batch_sz * self.num_matrix_heads, self.matrix_dim, self.matrix_dim)
+
+        if self.rl_lr_matrix_different:
+            m_norm_rl, m_rl = self.matrix_encoder_rl(hidden_states)
+            m_norm_rl = m_norm_rl.reshape(
+                context_sz, batch_sz * self.num_matrix_heads, self.matrix_dim, self.matrix_dim
+            )
+            m = torch.concatenate([m, m_rl], dim=0)
+        else:
+            m_norm_rl = m_norm_lr
 
         available_vectors = {}
 
         if {"global", "lr", "lr_excl"} & set(self.use_for_context):
             v_lr = self.calculate_vectors(
                 hidden_states,
-                m_norm,
+                m_norm_lr,
                 attention_mask,
                 accumulate=True,
                 init_type=self.vector_init_direction,
@@ -1452,7 +1551,7 @@ class BergmanMatrixLayer(nn.Module):
         if {"rl", "rl_excl"} & set(self.use_for_context):
             v_rl = self.calculate_vectors(
                 hidden_states,
-                m_norm,
+                m_norm_rl,
                 attention_mask,
                 accumulate=True,
                 init_type=self.vector_init_direction,
@@ -1470,7 +1569,7 @@ class BergmanMatrixLayer(nn.Module):
         if {"local", "local_l", "local_r"} & set(self.use_for_context):
             v_local = self.calculate_vectors(
                 hidden_states,
-                m_norm,
+                m_norm_lr,
                 attention_mask,
                 accumulate=False,
                 init_type=self.vector_init_direction,
@@ -1522,66 +1621,6 @@ class BergmanMatrixLayer(nn.Module):
             outputs = outputs + (v_global,)
 
         return outputs
-
-    def make_orthogonal(self, z):
-        """Based on `ortho_group_gen` scipy function"""
-        q, r = torch.linalg.qr(z)
-        # The last two dimensions are the rows and columns of R matrices.
-        # Extract the diagonals. Note that this eliminates a dimension.
-
-        # make diagonal entries of R to be positive, then the decomposition is unique
-        s = torch.diag_embed(r.diagonal(dim1=-2, dim2=-1).sign())
-        r = s @ r
-        q = q @ s
-
-        d = r.diagonal(offset=0, dim1=-2, dim2=-1)
-        # Add back a dimension for proper broadcasting: we're dividing
-        # each row of each R matrix by the diagonal of the R matrix.
-        q *= (d / d.abs())[..., None, :]  # to broadcast properly
-
-        return q
-
-    def matrix_encoder(self, hidden_states: torch.Tensor):
-        batch_sz, context_sz, *_ = hidden_states.size()
-
-        # Matrix preparation
-        x = hidden_states
-        if self.matrix_encoder_two_layers:
-            x = self.fc1(x)
-            x = gelu(x)
-            x = self.layer_norm(x)
-        m = self.fc_to_mat(x)
-        if self.complex_matrix:
-            m_j = self.fc_to_mat_j(x)
-            m = torch.view_as_complex(torch.stack([m, m_j], dim=-1))
-
-        m = m.view(batch_sz, context_sz, self.num_matrix_heads, self.matrix_dim, self.matrix_dim)
-        m = m.transpose(0, 1)  # we will iterate over context axis
-
-        if self.matrix_norm_alg is None:
-            m_norm = m
-        elif isinstance(self.matrix_norm_alg, int):
-            n = torch.norm(m, dim=self.matrix_norm_alg, keepdim=True) + self.matrix_norm_eps
-            m_norm = m / n
-        elif isinstance(self.matrix_norm_alg, list) or isinstance(self.matrix_norm_alg, tuple):
-            assert len(self.matrix_norm_alg) == 2  # This section is for Frobenius Norm
-            m_norm = (
-                m
-                / (torch.norm(m, dim=self.matrix_norm_alg, keepdim=True) + self.matrix_norm_eps)
-                * math.sqrt(self.matrix_dim)
-            )
-        elif self.matrix_norm_alg == "det":
-            d = d = m.detach().det()
-            d = d[..., None, None]
-            m_norm = m / (d.abs() ** (1 / self.matrix_dim) + self.matrix_norm_eps)
-        elif self.matrix_norm_alg == "ortho":
-            m_norm = self.make_orthogonal(
-                m.view(context_sz, batch_sz * self.num_matrix_heads, self.matrix_dim, self.matrix_dim)
-            ).view(m.size())
-        else:
-            raise KeyError()
-
-        return m_norm, m
 
     def calculate_vectors(
         self,

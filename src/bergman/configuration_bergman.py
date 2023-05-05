@@ -132,6 +132,9 @@ class BergmanConfig(PretrainedConfig):
             If `complex_matrix` is `True`, this parameter controls how the complex vector will be represented in
             subsequent network leyers. If `True`, the `abs` of the vector will be user, othervise, real and
             imaginary parts will be concatinated.
+        rl_lr_matrix_different (`bool`, *optional*, defaults to False)
+            Use same matrices for left to right and right o left passes or different
+
 
     Examples:
 
@@ -186,6 +189,7 @@ class BergmanConfig(PretrainedConfig):
         matrix_norm_eps=1e-6,
         complex_matrix=False,
         complex_matrix_abs=False,
+        rl_lr_matrix_different=False,
         **kwargs,
     ):
         super().__init__(pad_token_id=pad_token_id, bos_token_id=bos_token_id, eos_token_id=eos_token_id, **kwargs)
@@ -222,3 +226,4 @@ class BergmanConfig(PretrainedConfig):
         self.matrix_norm_eps = matrix_norm_eps
         self.complex_matrix = complex_matrix
         self.complex_matrix_abs = complex_matrix_abs
+        self.rl_lr_matrix_different=rl_lr_matrix_different
