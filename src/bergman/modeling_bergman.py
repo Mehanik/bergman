@@ -1346,6 +1346,59 @@ class BergmanEmbeddings(nn.Module):
         return position_ids.unsqueeze(0).expand(input_shape)
 
 
+class BergmanMatrixEncoderV2(nn.Module):
+    def __init__(self, config: BergmanConfig):
+        super().__init__()
+        if config.networks_for_heads is None and config.hidden_size % (config.num_matrix_heads) != 0:
+            raise ValueError(
+                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
+                f"heads ({config.num_matrix_heads})"
+            )
+
+        self.hidden_size = config.hidden_size
+        self.num_matrix_heads = config.num_matrix_heads
+        self.matrix_dim = config.matrix_dim
+        self.complex_matrix = config.complex_matrix
+
+        self.matrix_encodder_hidden_size = config.matrix_encoder_hidden_size
+
+        self.head_vector_sz = int(self.hidden_size / self.num_matrix_heads)
+        self.fc1 = nn.Linear(self.hidden_size, self.matrix_encodder_hidden_size * self.num_matrix_heads)
+        self.activation = nn.Softmax(dim=-1)
+
+        self.fc_to_mat = nn.Linear(self.matrix_encodder_hidden_size, self.matrix_dim * self.matrix_dim)
+        if self.complex_matrix:
+            self.fc_to_mat_j = nn.Linear(self.matrix_encodder_hidden_size, self.matrix_dim * self.matrix_dim)
+
+        self.matrix_norm_alg = config.matrix_norm_alg
+
+        self.is_decoder = config.is_decoder
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+    ) -> Tuple[torch.Tensor]:
+        batch_sz, context_sz, *_ = hidden_states.size()
+
+        # Matrix preparation
+        x = hidden_states
+        x = self.fc1(x)
+        x = x.view(batch_sz, context_sz, self.num_matrix_heads, self.matrix_encodder_hidden_size)
+        x = self.activation(x)
+        m = self.fc_to_mat(x)
+
+        if self.complex_matrix:
+            m_j = self.fc_to_mat_j(x)
+            m = torch.view_as_complex(torch.stack([m, m_j], dim=-1))
+
+        m = m.view(batch_sz, context_sz, self.num_matrix_heads, self.matrix_dim, self.matrix_dim)
+        m = m.transpose(0, 1)  # we will iterate over context axis
+
+        assert self.matrix_norm_alg is None, "Not implemented"
+
+        return m, m
+
+
 class BergmanMatrixEncoder(nn.Module):
     def __init__(self, config: BergmanConfig):
         super().__init__()
@@ -1363,13 +1416,30 @@ class BergmanMatrixEncoder(nn.Module):
         self.matrix_norm_eps = config.matrix_norm_eps
         self.complex_matrix = config.complex_matrix
 
+        self.matrix_encodder_hidden_size = (
+            config.matrix_encoder_hidden_size if self.matrix_encoder_two_layers else config.hidden_size
+        )
+
         self.head_vector_sz = int(self.hidden_size / self.num_matrix_heads)
         if self.matrix_encoder_two_layers:
-            self.fc1 = nn.Linear(self.hidden_size, self.hidden_size)
-            self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.fc_to_mat = nn.Linear(self.hidden_size, self.num_matrix_heads * self.matrix_dim * self.matrix_dim)
+            self.fc1 = nn.Linear(self.hidden_size, self.matrix_encodder_hidden_size)
+
+            if config.matrix_encoder_activation == "gelu":
+                self.activation = gelu
+                self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+            elif config.matrix_encoder_activation == "softmax":
+                self.activation = nn.Softmax(dim=-1)
+                self.layer_norm = None
+            else:
+                raise Exception("Wrong matrix_encoder_activation", config.matrix_encoder_activation)
+
+        self.fc_to_mat = nn.Linear(
+            self.matrix_encodder_hidden_size, self.num_matrix_heads * self.matrix_dim * self.matrix_dim
+        )
         if self.complex_matrix:
-            self.fc_to_mat_j = nn.Linear(self.hidden_size, self.num_matrix_heads * self.matrix_dim * self.matrix_dim)
+            self.fc_to_mat_j = nn.Linear(
+                self.matrix_encodder_hidden_size, self.num_matrix_heads * self.matrix_dim * self.matrix_dim
+            )
 
         self.matrix_norm_alg = config.matrix_norm_alg
 
@@ -1385,8 +1455,9 @@ class BergmanMatrixEncoder(nn.Module):
         x = hidden_states
         if self.matrix_encoder_two_layers:
             x = self.fc1(x)
-            x = gelu(x)
-            x = self.layer_norm(x)
+            x = self.activation(x)
+            if self.layer_norm is not None:
+                x = self.layer_norm(x)
         m = self.fc_to_mat(x)
         if self.complex_matrix:
             m_j = self.fc_to_mat_j(x)
@@ -1459,9 +1530,11 @@ class BergmanMatrixLayer(nn.Module):
         self.complex_matrix_abs = config.complex_matrix_abs
         self.rl_lr_matrix_different = config.rl_lr_matrix_different
 
-        self.matrix_encoder_lr = BergmanMatrixEncoder(config)
+        matrix_encoder_class = {1: BergmanMatrixEncoder, 2: BergmanMatrixEncoderV2}[config.matrix_encoder_version]
+
+        self.matrix_encoder_lr = matrix_encoder_class(config)
         if self.rl_lr_matrix_different:
-            self.matrix_encoder_rl = BergmanMatrixEncoder(config)
+            self.matrix_encoder_rl = matrix_encoder_class(config)
 
         self.head_vector_sz = int(self.hidden_size / self.num_matrix_heads)
         complex_sz_multiplyer = 2 if self.complex_matrix and not self.complex_matrix_abs else 1

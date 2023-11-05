@@ -190,6 +190,9 @@ class BergmanConfig(PretrainedConfig):
         complex_matrix=False,
         complex_matrix_abs=False,
         rl_lr_matrix_different=False,
+        matrix_encoder_activation="gelu",
+        matrix_encoder_hidden_size=768,
+        matrix_encoder_version=1,
         **kwargs,
     ):
         super().__init__(pad_token_id=pad_token_id, bos_token_id=bos_token_id, eos_token_id=eos_token_id, **kwargs)
@@ -226,4 +229,7 @@ class BergmanConfig(PretrainedConfig):
         self.matrix_norm_eps = matrix_norm_eps
         self.complex_matrix = complex_matrix
         self.complex_matrix_abs = complex_matrix_abs
-        self.rl_lr_matrix_different=rl_lr_matrix_different
+        self.rl_lr_matrix_different = rl_lr_matrix_different
+        self.matrix_encoder_activation = matrix_encoder_activation
+        self.matrix_encoder_hidden_size = matrix_encoder_hidden_size
+        self.matrix_encoder_version = matrix_encoder_version
