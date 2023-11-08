@@ -1894,15 +1894,23 @@ class BergmanEncoder(nn.Module):
         super().__init__()
         self.config = config
         if config.input_convnet_filter_size is not None:
-            self.input_convnet = nn.Conv1d(
+            self.input_convnet_1 = nn.Conv1d(
                 in_channels=config.hidden_size,
                 out_channels=config.hidden_size,
                 kernel_size=config.input_convnet_filter_size,
                 padding="same",
             )
-            self.input_layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+            self.input_convnet_2 = nn.Conv1d(
+                in_channels=config.hidden_size,
+                out_channels=config.hidden_size,
+                kernel_size=config.input_convnet_filter_size,
+                padding="same",
+            )
+            self.input_layer_norm_1 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+            self.input_layer_norm_2 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         else:
-            self.input_convnet = None
+            self.input_convnet_1 = None
+            self.input_convnet_2 = None
         self.layer = nn.ModuleList([BergmanLayer(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
 
@@ -1925,11 +1933,18 @@ class BergmanEncoder(nn.Module):
 
         next_decoder_cache = () if use_cache else None
 
-        if self.input_convnet is not None:
+        if self.input_convnet_1 is not None:
+            pre_conv = hidden_states
             hidden_states = torch.transpose(hidden_states, 1, 2)
-            hidden_states = self.input_convnet(hidden_states)
+            hidden_states = self.input_convnet_1(hidden_states)
             hidden_states = torch.swapaxes(hidden_states, 1, 2)
-            hidden_states = self.input_layer_norm(hidden_states)
+            hidden_states = self.input_layer_norm_1(hidden_states)
+            hidden_states = gelu(hidden_states)
+            hidden_states = torch.transpose(hidden_states, 1, 2)
+            hidden_states = self.input_convnet_2(hidden_states)
+            hidden_states = torch.swapaxes(hidden_states, 1, 2)
+            hidden_states += pre_conv
+            hidden_states = self.input_layer_norm_2(hidden_states)
             hidden_states = gelu(hidden_states)
 
         for i, layer_module in enumerate(self.layer):
