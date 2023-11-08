@@ -1364,11 +1364,15 @@ class BergmanMatrixEncoderV2(nn.Module):
 
         self.head_vector_sz = int(self.hidden_size / self.num_matrix_heads)
         self.fc1 = nn.Linear(self.hidden_size, self.matrix_encodder_hidden_size * self.num_matrix_heads)
-        self.activation = nn.Softmax(dim=-1)
+        self.softmax = nn.Softmax(dim=-1)
+        if not config.matrix_encoder_v2_softdiff:
+            self.activation = self.softmax
+        else:
+            self.activation = lambda x: self.softmax(x) - self.softmax(-x)
 
-        self.fc_to_mat = nn.Linear(self.matrix_encodder_hidden_size, self.matrix_dim * self.matrix_dim)
+        self.fc2 = nn.Linear(self.matrix_encodder_hidden_size, self.matrix_dim * self.matrix_dim)
         if self.complex_matrix:
-            self.fc_to_mat_j = nn.Linear(self.matrix_encodder_hidden_size, self.matrix_dim * self.matrix_dim)
+            self.fc2j = nn.Linear(self.matrix_encodder_hidden_size, self.matrix_dim * self.matrix_dim)
 
         self.matrix_norm_alg = config.matrix_norm_alg
 
@@ -1385,10 +1389,10 @@ class BergmanMatrixEncoderV2(nn.Module):
         x = self.fc1(x)
         x = x.view(batch_sz, context_sz, self.num_matrix_heads, self.matrix_encodder_hidden_size)
         x = self.activation(x)
-        m = self.fc_to_mat(x)
+        m = self.fc2(x)
 
         if self.complex_matrix:
-            m_j = self.fc_to_mat_j(x)
+            m_j = self.fc2j(x)
             m = torch.view_as_complex(torch.stack([m, m_j], dim=-1))
 
         m = m.view(batch_sz, context_sz, self.num_matrix_heads, self.matrix_dim, self.matrix_dim)
@@ -1889,6 +1893,16 @@ class BergmanEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        if config.input_convnet_filter_size is not None:
+            self.input_convnet = nn.Conv1d(
+                in_channels=config.hidden_size,
+                out_channels=config.hidden_size,
+                kernel_size=config.input_convnet_filter_size,
+                padding="same",
+            )
+            self.input_layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        else:
+            self.input_convnet = None
         self.layer = nn.ModuleList([BergmanLayer(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
 
@@ -1910,6 +1924,14 @@ class BergmanEncoder(nn.Module):
         # all_cross_attentions = () if output_matrices and self.config.add_cross_attention else None
 
         next_decoder_cache = () if use_cache else None
+
+        if self.input_convnet is not None:
+            hidden_states = torch.transpose(hidden_states, 1, 2)
+            hidden_states = self.input_convnet(hidden_states)
+            hidden_states = torch.swapaxes(hidden_states, 1, 2)
+            hidden_states = self.input_layer_norm(hidden_states)
+            hidden_states = gelu(hidden_states)
+
         for i, layer_module in enumerate(self.layer):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)

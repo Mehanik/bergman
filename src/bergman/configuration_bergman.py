@@ -193,6 +193,8 @@ class BergmanConfig(PretrainedConfig):
         matrix_encoder_activation="gelu",
         matrix_encoder_hidden_size=768,
         matrix_encoder_version=1,
+        matrix_encoder_v2_softdiff=False,
+        input_convnet_filter_size=None,
         **kwargs,
     ):
         super().__init__(pad_token_id=pad_token_id, bos_token_id=bos_token_id, eos_token_id=eos_token_id, **kwargs)
@@ -233,3 +235,5 @@ class BergmanConfig(PretrainedConfig):
         self.matrix_encoder_activation = matrix_encoder_activation
         self.matrix_encoder_hidden_size = matrix_encoder_hidden_size
         self.matrix_encoder_version = matrix_encoder_version
+        self.matrix_encoder_v2_softdiff = matrix_encoder_v2_softdiff
+        self.input_convnet_filter_size = input_convnet_filter_size
